@@ -1,87 +1,125 @@
-[BITS 16]
-[ORG 0x7C00]
+
+org 0x7C00
+bits 16
+
 start:
-    cli ; Disable interrupts
-    xor ax, ax ; Zero out AX register
-    mov ds, ax ; Set DS register to 0
-    mov es, ax ; Set ES register to 0
-; Clear the screen
-call clear_screen
-; Display boot menu
-call display_menu
-    ; Initialize the keyboard
-    mov al, 0xF4
-    out 0x60, al    ; Send the reset command to the keyboard controller
-    mov al, 0xF4
-    out 0x60, al    ; Send the reset command again
-                    ; Wait for user input
-wait_for_input:
-    mov ah, 0 ; BIOS keyboard interrupt function
-    int 0x16 ; Wait for key press
-    ; Check for valid scan code range (0x02 for '1', 0x03 for '2')
-    cmp al, 0x02
-    je normal_boot ; If '1' is pressed, jump to normal boot
-    cmp al, 0x03
-    je recovery_boot ; If '2' is pressed, jump to recovery boot
-    jmp wait_for_input ; If invalid key, wait for input again
-normal_boot:
-    call load_kernel
-    jmp 0x1000:0000 ; Jump to the kernel's entry point
-recovery_boot:
-    call load_recovery_kernel
-    jmp 0x2000:0000 ; Jump to the recovery kernel's entry point
-; Function to load the kernel
-load_kernel:
-    mov bx, 0x1000 ; Load address for the kernel (0x1000:0000)
-    call read_sector
-    ret
-; Function to load the recovery kernel
-load_recovery_kernel:
-    mov bx, 0x2000 ; Load address for the recovery kernel (0x2000:0000)
-    call read_sector
-    ret
-; Function to read a sector from the disk
-read_sector:
-    mov ah, 0x02 ; BIOS read sectors function
-    mov al, 1 ; Number of sectors to read
-    mov ch, 0 ; Cylinder number
-    mov dh, 0 ; Head number
-    mov cl, 2 ; Sector number (LBA 2)
-    mov dl, 0x80 ; Drive number (first hard drive)
-    int 0x13 ; BIOS interrupt
-    jc read_error ; Jump if carry flag is set (read error)
-    ret
-read_error:
-    mov si, error_msg
+    ; Set up stack
+    cli
+    xor ax, ax
+    mov ss, ax
+    mov sp, 0x7C00
+    sti
+
+    ; Clear the screen
+    mov ah, 0x00    ; AH = 0x00 -> Video Services - Set Video Mode
+    mov al, 0x03    ; AL = 0x03 -> Video Mode 80x25, 16 colors
+    int 0x10        ; Video Services - Call BIOS
+
+    ; Display welcome message
+    mov si, welcome_msg
     call print_string
+
+    ; Display menu
+    mov si, menu_msg
+    call print_string
+
+    ; Read user input
+    call get_key
+    cmp al, '1'
+    je load_kernel_message
+    cmp al, '2'
+    je show_disk_error
+    cmp al, '3'
+    je display_memory_map
+
+    ; Default to normal boot (show welcome message again)
+    jmp start
+
+load_kernel_message:
+    ; Clear screen
+    mov ah, 0x00
+    mov al, 0x03
+    int 0x10
+
+    ; Display message from kernel
+    mov si, kernel_hello_msg
+    call print_string
+
+    ; Infinite loop to halt
     jmp $
-; Function to clear the screen
-clear_screen:
-    mov ax, 0xB800 ; Video memory segment
-    mov es, ax
-    xor di, di ; Set DI to 0
-    mov ah, 0x07 ; Light gray on black
-    mov al, ' ' ; Space character
-    mov cx, 2000 ; 80x25 screen = 2000 characters
-    rep stosw ; Fill video memory with spaces
-    ret
-; Function to display the boot menu
-display_menu:
-    mov si, menu_msg ; Load address of menu message
-    call print_string ; Print the menu message
-    ret
-; Function to print a null-terminated string
+
+show_disk_error:
+    ; Display disk error message
+    mov si, disk_error_msg
+    call print_string
+
+    ; Wait for key press to reboot
+    mov si, press_any_key_msg
+    call print_string
+    call get_key   ; Wait for any key press
+
+    ; Reboot (using BIOS function)
+    mov ax, 0
+    int 0x16       ; BIOS function - wait for key press
+    int 0x19       ; BIOS function - warm boot
+
+display_memory_map:
+    ; Clear screen
+    mov ah, 0x00
+    mov al, 0x03
+    int 0x10
+
+    ; Display memory map title
+    mov si, memory_map_title_msg
+    call print_string
+
+    ; Simulated memory map display
+    mov si, memory_map_msg
+    call print_string
+
+    ; Prompt to reboot
+    mov si, press_any_key_msg
+    call print_string
+    call get_key   ; Wait for any key press
+
+    ; Reboot (using BIOS function)
+    mov ax, 0
+    int 0x16       ; BIOS function - wait for key press
+    int 0x19       ; BIOS function - warm boot
+
 print_string:
-    mov ah, 0x0E ; BIOS teletype function
+    ; Print string at DS:SI
+    mov ah, 0x0E
 .next_char:
-    lodsb ; Load next byte from string
-    or al, al ; Check if end of string (null terminator)
-    jz .done ; If null terminator, end
-    int 0x10 ; Print character
-    jmp .next_char ; Repeat for next character
+    lodsb
+    cmp al, 0
+    je .done
+    int 0x10
+    jmp .next_char
 .done:
     ret
-menu_msg db '1. Normal Boot', 0x0D, 0x0A, '2. Recovery Mode', 0x0D, 0x0A, 0
-error_msg db 'Error loading kernel', 0
-times 510 - ($ - $$) db 0 ; Fill the rest of the boot sector with zeros
-dw 0xAA55 ; Boot signature
+
+get_key:
+    ; Get key press
+    xor ah, ah
+    int 0x16
+    ret
+
+; Data Section
+welcome_msg db 'Welcome to the Bootloader', 0x0D, 0x0A, 0
+menu_msg db '1. Load Kernel', 0x0D, 0x0A, '2. Recovery Mode', 0x0D, 0x0A, '3. Display Memory Map', 0x0D, 0x0A, 0
+kernel_hello_msg db 'Hello from kernel!', 0x0D, 0x0A, 0
+disk_error_msg db 'Disk error: Kernel not found', 0x0D, 0x0A, 0
+press_any_key_msg db 'Press any key to reboot...', 0x0D, 0x0A, 0
+memory_map_title_msg db 'Memory Map:', 0x0D, 0x0A, 0
+memory_map_msg db 'Base Address: 0x00000000, Length: 0x1000000 bytes (16 MB)', 0x0D, 0x0A
+                db 'Base Address: 0x10000000, Length: 0x200000 bytes (2 MB)', 0x0D, 0x0A
+                db 'Base Address: 0x20000000, Length: 0x400000 bytes (4 MB)', 0x0D, 0x0A
+                ; db 'Base Address: 0x60000000, Length: 0x10000000 bytes (256 MB)', 0x0D, 0x0A
+                ; db 'Base Address: 0xA0000000, Length: 0x20000000 bytes (512 MB)', 0x0D, 0x0A, 0
+
+; Padding to ensure bootloader fits within 512 bytes
+times 510-($-$$) db 0
+dw 0xAA55       ; Boot signature
+
+
